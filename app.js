@@ -1,46 +1,34 @@
-var createError = require('http-errors');
 var express = require('express');
-var path = require('path');
-var cookieParser = require('cookie-parser');
 var logger = require('morgan');
-const nunjucks = require('nunjucks');
-
-var indexRouter = require('./routes/index');
-// var usersRouter = require('./routes/users');
 
 var app = express();
-
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'njk');
-nunjucks.configure('views', { 
-  express: app,
-  watch: true,
-});
 
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
 
-app.use('/', indexRouter);
-// app.use('/users', usersRouter);
-
-// catch 404 and forward to error handler
-app.use(function(req, res, next) {
-  next(createError(404));
+// 서버 정상 작동 확인
+app.get('/', function (req, res) {
+  res.json({
+    service: 'ScalpBorn Auto Message',
+    status: 'running'
+  });
 });
 
-// error handler
-app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+// 서버 상태 확인용
+app.get('/health', function (req, res) {
+  res.status(200).json({
+    ok: true
+  });
+});
 
-  // render the error page
-  res.status(err.status || 500);
-  res.render('error');
+// 카페24 Webhook 수신 준비
+app.post('/webhooks/cafe24', function (req, res) {
+  console.log('Cafe24 Webhook received:', req.body);
+
+  res.status(200).json({
+    received: true
+  });
 });
 
 module.exports = app;
