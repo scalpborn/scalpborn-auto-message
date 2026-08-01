@@ -296,7 +296,7 @@ app.get('/test/orders', function (req, res) {
     }
   };
 
-  requestCafe24Api(
+  var orderRequest = requestCafe24Api(
     requestOptions,
     function (requestError, orderData, statusCode) {
       if (requestError) {
@@ -328,6 +328,8 @@ app.get('/test/orders', function (req, res) {
       });
     }
   );
+
+  orderRequest.end();
 });
 
 app.post('/webhooks/cafe24', function (req, res) {
