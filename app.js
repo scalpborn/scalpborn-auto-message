@@ -10,25 +10,22 @@ app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-/*
- * Cloudtype 환경변수
- * 실제 키는 GitHub 코드에 직접 입력하지 않습니다.
- */
 var CLIENT_ID = process.env.CAFE24_CLIENT_ID;
 var CLIENT_SECRET = process.env.CAFE24_CLIENT_SECRET;
 var MALL_ID = process.env.CAFE24_MALL_ID || 'scalpborn3';
 var REDIRECT_URI = process.env.CAFE24_REDIRECT_URI;
 
-/*
- * 현재는 연결 시험용 메모리 저장 방식입니다.
- * 서버가 재시작되면 아래 정보는 사라집니다.
- */
 var oauthStates = new Map();
 var oauthToken = null;
 
-/*
- * 오래된 OAuth state 정리
- */
+function formatDate(date) {
+  var year = date.getFullYear();
+  var month = String(date.getMonth() + 1).padStart(2, '0');
+  var day = String(date.getDate()).padStart(2, '0');
+
+  return year + '-' + month + '-' + day;
+}
+
 function cleanupOauthStates() {
   var expirationTime = Date.now() - 10 * 60 * 1000;
 
@@ -39,10 +36,18 @@ function cleanupOauthStates() {
   });
 }
 
-/*
- * 카페24 API 요청 공통 함수
- */
 function requestCafe24Api(options, callback) {
+  var completed = false;
+
+  function finish(error, data, statusCode) {
+    if (completed) {
+      return;
+    }
+
+    completed = true;
+    callback(error, data, statusCode);
+  }
+
   var request = https.request(options, function (response) {
     var responseData = '';
 
@@ -54,32 +59,32 @@ function requestCafe24Api(options, callback) {
       var parsedData;
 
       try {
-        parsedData = responseData
-          ? JSON.parse(responseData)
-          : {};
+        parsedData = responseData ? JSON.parse(responseData) : {};
       } catch (parseError) {
-        return callback(
+        return finish(
           new Error('카페24 응답을 JSON으로 해석하지 못했습니다.'),
           null,
           response.statusCode
         );
       }
 
-      callback(null, parsedData, response.statusCode);
+      finish(null, parsedData, response.statusCode);
     });
   });
 
+  request.setTimeout(10000, function () {
+    request.destroy(
+      new Error('카페24 API 응답 시간이 10초를 초과했습니다.')
+    );
+  });
+
   request.on('error', function (error) {
-    callback(error);
+    finish(error);
   });
 
   return request;
 }
 
-/*
- * 기본 주소
- * 카페24 OAuth 인증을 시작합니다.
- */
 app.get('/', function (req, res) {
   var mallId = req.query.mall_id || MALL_ID;
 
@@ -122,9 +127,6 @@ app.get('/', function (req, res) {
   return res.redirect(authorizationUrl);
 });
 
-/*
- * 서버 정상 작동 확인
- */
 app.get('/health', function (req, res) {
   res.status(200).json({
     ok: true,
@@ -132,10 +134,6 @@ app.get('/health', function (req, res) {
   });
 });
 
-/*
- * 카페24 토큰 저장 여부 확인
- * 실제 토큰 문자열은 화면에 보여주지 않습니다.
- */
 app.get('/oauth/status', function (req, res) {
   if (!oauthToken) {
     return res.status(401).json({
@@ -152,14 +150,10 @@ app.get('/oauth/status', function (req, res) {
     shop_no: oauthToken.shopNo,
     scopes: oauthToken.scopes,
     expires_at: oauthToken.expiresAt,
-    refresh_token_expires_at:
-      oauthToken.refreshTokenExpiresAt
+    refresh_token_expires_at: oauthToken.refreshTokenExpiresAt
   });
 });
 
-/*
- * 카페24 OAuth 인증 결과 수신
- */
 app.get('/oauth', function (req, res) {
   var code = req.query.code;
   var state = req.query.state;
@@ -192,7 +186,6 @@ app.get('/oauth', function (req, res) {
   oauthStates.delete(state);
 
   var mallId = savedState.mallId;
-
   var requestBody = querystring.stringify({
     grant_type: 'authorization_code',
     code: code,
@@ -219,15 +212,12 @@ app.get('/oauth', function (req, res) {
     requestOptions,
     function (requestError, tokenData, statusCode) {
       if (requestError) {
-        console.error(
-          'Cafe24 token request error:',
-          requestError
-        );
+        console.error('Cafe24 token request error:', requestError);
 
         return res.status(500).json({
           ok: false,
-          message:
-            '카페24 토큰 서버 연결 중 오류가 발생했습니다.'
+          message: '카페24 토큰 서버 연결 중 오류가 발생했습니다.',
+          detail: requestError.message
         });
       }
 
@@ -239,15 +229,11 @@ app.get('/oauth', function (req, res) {
         });
       }
 
-      /*
-       * 발급된 토큰 임시 저장
-       */
       oauthToken = {
         accessToken: tokenData.access_token,
         refreshToken: tokenData.refresh_token,
         expiresAt: tokenData.expires_at,
-        refreshTokenExpiresAt:
-          tokenData.refresh_token_expires_at,
+        refreshTokenExpiresAt: tokenData.refresh_token_expires_at,
         mallId: tokenData.mall_id || mallId,
         shopNo: tokenData.shop_no,
         scopes: tokenData.scopes
@@ -267,8 +253,7 @@ app.get('/oauth', function (req, res) {
         shop_no: oauthToken.shopNo,
         scopes: oauthToken.scopes,
         expires_at: oauthToken.expiresAt,
-        refresh_token_expires_at:
-          oauthToken.refreshTokenExpiresAt,
+        refresh_token_expires_at: oauthToken.refreshTokenExpiresAt,
         next_test_url: '/test/orders'
       });
     }
@@ -278,31 +263,36 @@ app.get('/oauth', function (req, res) {
   tokenRequest.end();
 });
 
-/*
- * 최근 주문 1건 조회 테스트
- */
 app.get('/test/orders', function (req, res) {
   if (!oauthToken || !oauthToken.accessToken) {
     return res.status(401).json({
       ok: false,
-      message:
-        '카페24 OAuth 인증을 먼저 완료해 주세요.',
+      message: '카페24 OAuth 인증을 먼저 완료해 주세요.',
       oauth_start_url: '/'
     });
   }
 
   var mallId = oauthToken.mallId || MALL_ID;
+  var endDate = new Date();
+  var startDate = new Date();
+
+  startDate.setDate(endDate.getDate() - 30);
+
+  var orderQuery = querystring.stringify({
+    shop_no: oauthToken.shopNo || 1,
+    start_date: formatDate(startDate),
+    end_date: formatDate(endDate),
+    limit: 1
+  });
 
   var requestOptions = {
     hostname: mallId + '.cafe24api.com',
     port: 443,
-    path: '/api/v2/admin/orders?limit=1',
+    path: '/api/v2/admin/orders?' + orderQuery,
     method: 'GET',
     headers: {
-      Authorization:
-        'Bearer ' + oauthToken.accessToken,
-      'Content-Type': 'application/json',
-      'X-Cafe24-Api-Version': '2026-03-01'
+      Authorization: 'Bearer ' + oauthToken.accessToken,
+      'Content-Type': 'application/json'
     }
   };
 
@@ -310,15 +300,12 @@ app.get('/test/orders', function (req, res) {
     requestOptions,
     function (requestError, orderData, statusCode) {
       if (requestError) {
-        console.error(
-          'Cafe24 order request error:',
-          requestError
-        );
+        console.error('Cafe24 order request error:', requestError);
 
         return res.status(500).json({
           ok: false,
-          message:
-            '카페24 주문 API 연결 중 오류가 발생했습니다.'
+          message: '카페24 주문 API 연결 중 오류가 발생했습니다.',
+          detail: requestError.message
         });
       }
 
@@ -333,29 +320,24 @@ app.get('/test/orders', function (req, res) {
       return res.status(200).json({
         ok: true,
         message: '카페24 주문 조회에 성공했습니다.',
+        search_period: {
+          start_date: formatDate(startDate),
+          end_date: formatDate(endDate)
+        },
         result: orderData
       });
     }
   );
 });
 
-/*
- * 카페24 Webhook 수신 준비
- */
 app.post('/webhooks/cafe24', function (req, res) {
-  console.log(
-    'Cafe24 Webhook received:',
-    req.body
-  );
+  console.log('Cafe24 Webhook received:', req.body);
 
   res.status(200).json({
     received: true
   });
 });
 
-/*
- * 존재하지 않는 주소 처리
- */
 app.use(function (req, res) {
   res.status(404).json({
     ok: false,
