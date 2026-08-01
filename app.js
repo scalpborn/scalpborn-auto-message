@@ -46,7 +46,7 @@ app.get('/', function (req, res) {
     client_id: CLIENT_ID,
     state: state,
     redirect_uri: REDIRECT_URI,
-    scope: 'mall.read_order mall.write_order mall.read_store'
+    scope: 'mall.read_order,mall.write_order,mall.read_store'
   });
 
   var authorizationUrl =
